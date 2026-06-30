@@ -94,14 +94,27 @@ def _find(text: str, target: str) -> int:
         raise ValueError(f"Could not locate '{target}' in document text")
     return idx
 
-def _r(doc_id_short: str, idx: int, text: str, content: str, type_: str, conf: float) -> RedactionSpan:
-    """Convenience: build a RedactionSpan from content + target text."""
-    start = _find(content, text)
+def _find_nth(content: str, text: str, n: int = 1) -> int:
+    """Return the start index of the n-th (1-indexed) occurrence of text in content."""
+    start = 0
+    for _ in range(n):
+        idx = content.find(text, start)
+        if idx == -1:
+            raise ValueError(f"Text {text!r} not found (occurrence {n})")
+        start = idx + 1
+    return idx
+
+def _r(doc_id_short: str, idx: int, text: str, content: str, type_: str, conf: float, occurrence: int = 1) -> RedactionSpan:
+    """Convenience: build a RedactionSpan from content + target text.
+    
+    occurrence: 1-indexed. Use occurrence=2 to target the second match in the document.
+    """
+    start = _find_nth(content, text, occurrence)
     return RedactionSpan(f"r{doc_id_short}-{idx}", start, start + len(text), type_, conf, text)
 
 def _nm(doc_id_short: str, idx: int, text: str, content: str, type_: str, conf: float) -> NearMissSpan:
     """Convenience: build a NearMissSpan from content + target text."""
-    start = _find(content, text)
+    start = _find_nth(content, text)
     return NearMissSpan(f"nm{doc_id_short}-{idx}", start, start + len(text), type_, conf)
 
 # ---------------------------------------------------------------------------
@@ -154,7 +167,7 @@ def _build_documents() -> Dict[str, DocumentState]:
     # ── doc-002 : Employment contract ───────────────────────────────────────
     c2 = (
         "EMPLOYMENT AGREEMENT\n"
-        "This document formalises the terms of employment. Dated Jan 15, 2025. TechCorp LLC, herein referred to as Employer, and Sarah Jenkins, herein referred to as Employee.\n"
+        "This document formalises the terms of employment. Dated Jan 15, 2025. TechCorp LLC (hiring side) and Sarah Jenkins (hired side).\n"
         "Employee Details:\n"
         "Address: 1422 Oakwood Drive, Apt 4B, Seattle WA 98109\n"
         "Phone: 206-555-0199\n"
@@ -360,10 +373,10 @@ def _build_documents() -> Dict[str, DocumentState]:
     d8.redactions.append(_r("8", 3, "59 Fairview Court, Denver CO 80203", c8, "Address", 0.96))
     # confirmed — "income" label precedes
     d8.redactions.append(_r("8", 4, "$97,000", c8, "Financial", 0.87))
-    # DISPUTABLE — second occurrence of "Thomas Reilly" (after "Applicant signature:");
-    #              context: ['construction', 'llc', 'annual', 'income', 'credit', 'score', 'applicant', 'signature']
-    #              'signed' IS in Name CONTEXT_KEYWORDS BUT 'signature' is not. kw=None; conf 0.60
-    d8.redactions.append(_r("8", 5, "Thomas Reilly", c8, "Name", 0.60))
+    # DISPUTABLE — second occurrence of "Thomas Reilly" (at "Authorization printed name:");
+    #              context: ['income', 'credit', 'score', 'authorization', 'printed', 'name']
+    #              none of these are Name CONTEXT_KEYWORDS; conf 0.60 → disputable
+    d8.redactions.append(_r("8", 5, "Thomas Reilly", c8, "Name", 0.60, occurrence=2))
     # near-miss — "Apex Construction LLC" pattern-matches Name, but "llc" disqualifies
     d8.near_misses.append(_nm("8", 0, "Apex Construction", c8, "Name", 0.73))
     # near-miss — "February 20, 2025" date matches DOB pattern but "date" label in signing context disqualifies
@@ -373,8 +386,8 @@ def _build_documents() -> Dict[str, DocumentState]:
     # ── doc-009 : NDA ───────────────────────────────────────────────────────
     c9 = (
         "NON-DISCLOSURE AGREEMENT\n\n"
-        "This Agreement covers Helix Biotech Inc. (\"Discloser\") and "
-        "Dr. Samira Okonkwo (\"Recipient\").\n\n"
+        "This Agreement covers Helix Biotech (the Discloser) and "
+        "Dr. Samira Okonkwo (the Recipient).\n\n"
         "Dr. Okonkwo agrees not to disclose any confidential information shared by "
         "Helix Biotech Inc. during her engagement as an independent research consultant, "
         "beginning March 1, 2025.\n\n"

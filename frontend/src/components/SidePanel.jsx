@@ -152,6 +152,22 @@ export default function Inspector({
   return (
     <>
       <div className="inspector-body">
+        {/* Colour key — always visible */}
+        <div className="colour-key">
+          <div className="colour-key-row">
+            <span className="colour-key-dot red" />
+            <span className="colour-key-text"><strong>Red</strong>  AI redacted. High confidence.</span>
+          </div>
+          <div className="colour-key-row">
+            <span className="colour-key-dot purple" />
+            <span className="colour-key-text"><strong>Purple</strong>  Disputable. Not redacted - AI thinks it probably should be, but evidence is weak.</span>
+          </div>
+          <div className="colour-key-row">
+            <span className="colour-key-dot amber" />
+            <span className="colour-key-text"><strong>Amber</strong>  Near-miss. AI noticed it but chose not to redact due to context.</span>
+          </div>
+        </div>
+
         {!selectedSpan ? (
           <div className="inspector-empty">
             <div className="inspector-empty-label">
@@ -269,10 +285,10 @@ export default function Inspector({
 
 function SpanNavItem({ span, isSelected, onClick }) {
   const dotClass =
-    span.user_unredacted                   ? 'green' :
-    span.user_redacted                     ? 'red' :
-    span.kind === 'near_miss'              ? 'amber' :
-    span.status === 'disputable'           ? 'purple' : 'red';
+    span.user_unredacted ? 'green' :
+      span.user_redacted ? 'red' :
+        span.kind === 'near_miss' ? 'amber' :
+          span.status === 'disputable' ? 'purple' : 'red';
 
   return (
     <div

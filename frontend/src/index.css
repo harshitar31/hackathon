@@ -497,6 +497,44 @@ body {
 }
 
 /* Empty state — minimal, informative */
+/* Colour key legend — always visible at top of inspector */
+.colour-key {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.colour-key-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+
+.colour-key-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.colour-key-dot.red    { background: var(--color-red); }
+.colour-key-dot.purple { background: var(--color-purple); }
+.colour-key-dot.amber  { background: var(--color-amber); }
+
+.colour-key-text {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.colour-key-text strong {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
 .inspector-empty {
   padding: var(--sp-8) var(--sp-5);
   text-align: center;
