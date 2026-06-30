@@ -1,39 +1,115 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Download, Eye, FileText } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Download, Eye, FileText, ChevronDown, RotateCcw } from 'lucide-react';
 import './index.css';
 import DocumentViewer from './components/DocumentViewer';
 import Inspector from './components/SidePanel';
 
 const API = 'http://localhost:8000';
 
+// ---------------------------------------------------------------------------
+// Session ID — generated once per browser tab, persisted in sessionStorage
+// so a page refresh keeps the same session but a new tab gets a fresh one.
+// ---------------------------------------------------------------------------
+function getSessionId() {
+  const key = 'greenact_session_id';
+  let id = sessionStorage.getItem(key);
+  if (!id) {
+    id = crypto.randomUUID();
+    sessionStorage.setItem(key, id);
+  }
+  return id;
+}
+
+const SESSION_ID = getSessionId();
+
+function apiFetch(path, opts = {}) {
+  return fetch(`${API}${path}`, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-ID': SESSION_ID,
+      ...(opts.headers || {}),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
 export default function App() {
-  const [doc, setDoc]             = useState(null);
+  // Document list for selector
+  const [docList, setDocList]     = useState([]);   // [{doc_id, filename}]
+  const [activeDocId, setActiveDocId] = useState(null);
+
+  // Review state
+  const [doc, setDoc]               = useState(null);
+  const [filename, setFilename]     = useState('');
   const [redactions, setRedactions] = useState([]);
   const [nearMisses, setNearMisses] = useState([]);
-  const [summary, setSummary]     = useState({ total_redactions: 0, near_miss_count: 0, erased_count: 0 });
+  const [summary, setSummary]       = useState({ total_redactions: 0, near_miss_count: 0 });
   const [activeSpanId, setActiveSpanId] = useState(null);
-  const [view, setView]           = useState('original');
+  const [view, setView]             = useState('original');
   const [previewDoc, setPreviewDoc] = useState(null);
-  const [isErasing, setIsErasing] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError]         = useState(null);
+  const [isOverriding, setIsOverriding] = useState(false);
+  const [canUndo, setCanUndo]       = useState(false);
+  const [isLoading, setIsLoading]   = useState(true);
+  const [error, setError]           = useState(null);
 
-  // ── Initial load ──────────────────────────────────────────
-  const loadAnalysis = useCallback(async () => {
+  // Selector dropdown open state
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const selectorRef = useRef(null);
+
+  // ── Bootstrap: fetch doc list → open first doc ──────────────────────────
+  useEffect(() => {
+    async function bootstrap() {
+      try {
+        const res = await apiFetch('/documents');
+        if (!res.ok) throw new Error(`Failed to load documents (${res.status})`);
+        const list = await res.json();
+        setDocList(list);
+        if (list.length > 0) {
+          await loadDocument(list[0].doc_id);
+        }
+      } catch (e) {
+        setError(e.message);
+        setIsLoading(false);
+      }
+    }
+    bootstrap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Close selector when clicking outside
+  useEffect(() => {
+    function handleOutside(e) {
+      if (selectorRef.current && !selectorRef.current.contains(e.target)) {
+        setSelectorOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, []);
+
+  // ── Load / switch document ───────────────────────────────────────────────
+  const loadDocument = useCallback(async (docId) => {
     setIsLoading(true);
     setError(null);
+    setActiveSpanId(null);
+    setView('original');
+    setPreviewDoc(null);
+    setSelectorOpen(false);
+
     try {
-      const res = await fetch(`${API}/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
+      const res = await apiFetch(`/documents/${docId}`);
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
+      setActiveDocId(docId);
       setDoc(data.document);
+      setFilename(data.filename);
       setRedactions(data.redactions);
       setNearMisses(data.near_misses);
       setSummary(data.summary);
+      setCanUndo(data.can_undo);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -41,21 +117,27 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { loadAnalysis(); }, [loadAnalysis]);
-
-  // ── Span selection ────────────────────────────────────────
+  // ── Span selection ───────────────────────────────────────────────────────
   const handleSpanClick = useCallback((spanId) => {
     setActiveSpanId(spanId);
-    const el = window.document.getElementById(`span-${spanId}`);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    
+    // Scroll document span into view (useful when clicking nav items)
+    const docEl = window.document.getElementById(`span-${spanId}`);
+    if (docEl) docEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    
+    // Scroll side panel nav item into view (useful when clicking document words)
+    setTimeout(() => {
+      const navEl = window.document.getElementById(`nav-${spanId}`);
+      if (navEl) navEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 10);
   }, []);
 
-  // ── View toggle ───────────────────────────────────────────
+  // ── View toggle ──────────────────────────────────────────────────────────
   const handleViewChange = useCallback(async (newView) => {
     setView(newView);
-    if (newView === 'preview' && !previewDoc) {
+    if (newView === 'preview') {
       try {
-        const res = await fetch(`${API}/preview-output`);
+        const res = await apiFetch('/preview-output');
         if (!res.ok) throw new Error('Preview failed');
         const data = await res.json();
         setPreviewDoc(data.preview_document);
@@ -63,48 +145,113 @@ export default function App() {
         setError(e.message);
       }
     }
-  }, [previewDoc]);
+  }, []);
 
-  // ── Erase ─────────────────────────────────────────────────
-  const handleErase = useCallback(async (spanId) => {
-    setIsErasing(true);
-    try {
-      const res = await fetch(`${API}/erase`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ span_ids: [spanId] }),
-      });
-      if (!res.ok) throw new Error(`Erase failed: ${res.status}`);
-      const data = await res.json();
-      setDoc(data.document);
-      setRedactions(data.redactions);
-      setNearMisses(data.near_misses);
-      setSummary(data.summary);
-      setActiveSpanId(null);
-      setPreviewDoc(null);
-      // If we're in preview mode, refresh it immediately
-      if (view === 'preview') {
-        const pres = await fetch(`${API}/preview-output`);
+  // ── Shared override handler ───────────────────────────────────────────────
+  // Called by user-redact, user-unredact, undo — all return the same payload shape.
+  const _applyOverrideResult = useCallback(async (data) => {
+    setRedactions(data.redactions);
+    setNearMisses(data.near_misses);
+    setSummary(data.summary);
+    setCanUndo(data.can_undo);
+    // Always refresh preview if it's open
+    if (view === 'preview') {
+      const pres = await apiFetch('/preview-output');
+      if (pres.ok) {
         const pdata = await pres.json();
         setPreviewDoc(pdata.preview_document);
       }
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setIsErasing(false);
+    } else {
+      setPreviewDoc(null); // invalidate so next open of Redacted tab is fresh
     }
   }, [view]);
 
-  // ── Download ──────────────────────────────────────────────
+  // ── User Redact (disputable / near-miss → force redact) ───────────────────
+  const handleUserRedact = useCallback(async (spanId) => {
+    setIsOverriding(true);
+    try {
+      const res = await apiFetch('/user-redact', {
+        method: 'POST',
+        body: JSON.stringify({ span_id: spanId }),
+      });
+      if (!res.ok) throw new Error(`Override failed: ${res.status}`);
+      const data = await res.json();
+      await _applyOverrideResult(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setIsOverriding(false);
+    }
+  }, [_applyOverrideResult]);
+
+  // ── User Unredact (confirmed → force show) ────────────────────────────────
+  const handleUserUnredact = useCallback(async (spanId) => {
+    setIsOverriding(true);
+    try {
+      const res = await apiFetch('/user-unredact', {
+        method: 'POST',
+        body: JSON.stringify({ span_id: spanId }),
+      });
+      if (!res.ok) throw new Error(`Override failed: ${res.status}`);
+      const data = await res.json();
+      await _applyOverrideResult(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setIsOverriding(false);
+    }
+  }, [_applyOverrideResult]);
+
+  // ── Undo ──────────────────────────────────────────────────────────────────
+  const handleUndo = useCallback(async () => {
+    if (!canUndo) return;
+    setIsOverriding(true);
+    try {
+      const res = await apiFetch('/undo', { method: 'POST' });
+      if (!res.ok) throw new Error('Nothing to undo');
+      const data = await res.json();
+      await _applyOverrideResult(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setIsOverriding(false);
+    }
+  }, [canUndo, _applyOverrideResult]);
+
+  // ── Revert a specific span's override (Re-redact / Cancel Override) ───────
+  const handleRevertSpan = useCallback(async (spanId) => {
+    setIsOverriding(true);
+    try {
+      const res = await apiFetch('/revert-span', {
+        method: 'POST',
+        body: JSON.stringify({ span_id: spanId }),
+      });
+      if (!res.ok) throw new Error(`Revert failed: ${res.status}`);
+      const data = await res.json();
+      await _applyOverrideResult(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setIsOverriding(false);
+    }
+  }, [_applyOverrideResult]);
+
+  // ── Download ─────────────────────────────────────────────────────────────
   const handleDownload = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/download`);
+      const res = await apiFetch('/download');
       if (!res.ok) throw new Error('Download failed');
+      const contentDisposition = res.headers.get('Content-Disposition');
+      let dlFilename = 'greenact_output.txt';
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="(.+)"/);
+        if (match) dlFilename = match[1];
+      }
       const blob = await res.blob();
       const url  = URL.createObjectURL(blob);
       const a    = window.document.createElement('a');
       a.href     = url;
-      a.download = 'conseal_output.txt';
+      a.download = dlFilename;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -112,46 +259,78 @@ export default function App() {
     }
   }, []);
 
-  // ── Derived state ─────────────────────────────────────────
+  // ── Derived state ────────────────────────────────────────────────────────
   const selectedSpan = activeSpanId
     ? [...redactions, ...nearMisses].find(s => s.span_id === activeSpanId)
     : null;
 
   const allSpans = [...redactions, ...nearMisses];
 
-  // ── Render ────────────────────────────────────────────────
+  const currentFilename = filename || 'Loading…';
+  const currentDocEntry = docList.find(d => d.doc_id === activeDocId);
+
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="app">
-
-      {/* ── Top Bar ──────────────────────────────────────────
-          Compact, no hero. Left: wordmark + file context.
-          Right: live stats (meaningful, not decorative).
-          Reason: status bar pattern (VS Code, Linear) keeps
-          document as visual focus — header is informational only. */}
+      {/* ── Topbar ─────────────────────────────────────────────────────── */}
       <header className="topbar">
         <div className="topbar-brand">
-          <FileText size={15} color="var(--color-text-primary)" aria-hidden="true" />
+          <FileText size={15} color="var(--color-accent)" aria-hidden="true" />
           <span className="topbar-wordmark">Greenact</span>
           <div className="topbar-divider" />
-          <span className="topbar-context">Redaction Review</span>
+
+          {/* Compact document selector */}
+          <div className="doc-selector" ref={selectorRef}>
+            <span className="doc-selector-label">Sample Document</span>
+            <button
+              id="doc-selector-btn"
+              className={`doc-selector-btn${selectorOpen ? ' is-open' : ''}`}
+              onClick={() => setSelectorOpen(o => !o)}
+              aria-haspopup="listbox"
+              aria-expanded={selectorOpen}
+              disabled={isLoading}
+            >
+              <span className="doc-selector-name">{currentFilename}</span>
+              <ChevronDown size={13} aria-hidden="true" className="doc-selector-chevron" />
+            </button>
+
+            {selectorOpen && (
+              <ul className="doc-selector-menu" role="listbox" aria-label="Select document">
+                {docList.map(d => (
+                  <li
+                    key={d.doc_id}
+                    id={`doc-option-${d.doc_id}`}
+                    className={`doc-selector-option${d.doc_id === activeDocId ? ' is-active' : ''}`}
+                    role="option"
+                    aria-selected={d.doc_id === activeDocId}
+                    onClick={() => loadDocument(d.doc_id)}
+                  >
+                    <FileText size={12} aria-hidden="true" />
+                    {d.filename}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
+        {/* Topbar stats */}
         <div className="topbar-stats">
-          {summary.total_redactions > 0 && (
+          {!isLoading && summary.total_redactions > 0 && (
             <div className="stat">
               <div className="stat-indicator red" />
               <strong>{summary.total_redactions}</strong>
               <span>redacted</span>
             </div>
           )}
-          {summary.near_miss_count > 0 && (
+          {!isLoading && summary.near_miss_count > 0 && (
             <div className="stat">
               <div className="stat-indicator amber" />
               <strong>{summary.near_miss_count}</strong>
               <span>near-miss</span>
             </div>
           )}
-          {summary.erased_count > 0 && (
+          {!isLoading && summary.erased_count > 0 && (
             <div className="stat">
               <div className="stat-indicator green" />
               <strong>{summary.erased_count}</strong>
@@ -161,7 +340,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Error banner ─────────────────────────────────────── */}
+      {/* ── Error banner ───────────────────────────────────────────────── */}
       {error && (
         <div className="error-banner" role="alert">
           <span>{error}</span>
@@ -169,16 +348,11 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Main workspace ─────────────────────────────────── */}
+      {/* ── Main workspace ─────────────────────────────────────────────── */}
       <div className="workspace">
-
-        {/* ── Document pane ──────────────────────────────────
-            Primary visual focus. Toolbar is minimal — just the
-            view toggle + download action. No decorative headers. */}
         <main className="doc-pane">
           <div className="doc-toolbar">
             <div className="toolbar-left">
-              {/* View toggle — segmented control, not tabs */}
               <div className="seg-control" role="group" aria-label="Document view">
                 <button
                   id="view-original"
@@ -193,37 +367,52 @@ export default function App() {
                   onClick={() => handleViewChange('preview')}
                 >
                   <Eye size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} aria-hidden="true" />
-                  What Gets Sent
+                  Redacted
                 </button>
               </div>
             </div>
-
-            {/* Download — single primary action in toolbar */}
-            <button
-              id="download-btn"
-              className="btn-primary"
-              onClick={handleDownload}
-              disabled={isLoading}
-            >
-              <Download size={13} aria-hidden="true" />
-              Download
-            </button>
+            <div style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
+              <button
+                id="undo-btn"
+                className="btn-secondary"
+                onClick={handleUndo}
+                disabled={!canUndo || isOverriding}
+                title="Undo last override"
+              >
+                <RotateCcw size={13} aria-hidden="true" />
+                Undo
+              </button>
+              <button
+                id="download-btn"
+                className="btn-primary"
+                onClick={handleDownload}
+                disabled={isLoading}
+              >
+                <Download size={13} aria-hidden="true" />
+                Download
+              </button>
+            </div>
           </div>
 
-          <DocumentViewer
-            document={doc}
-            redactions={redactions}
-            nearMisses={nearMisses}
-            activeSpanId={activeSpanId}
-            onSpanClick={handleSpanClick}
-            previewDoc={previewDoc}
-            isPreview={view === 'preview'}
-          />
+          {isLoading ? (
+            <div className="skeleton" style={{ padding: '40px 48px' }}>
+              {[90, 75, 82, 60, 88, 70, 55, 78].map((w, i) => (
+                <div key={i} className="skel-line" style={{ width: `${w}%` }} />
+              ))}
+            </div>
+          ) : (
+            <DocumentViewer
+              document={doc}
+              redactions={redactions}
+              nearMisses={nearMisses}
+              activeSpanId={activeSpanId}
+              onSpanClick={handleSpanClick}
+              previewDoc={previewDoc}
+              isPreview={view === 'preview'}
+            />
+          )}
         </main>
 
-        {/* ── Inspector panel ────────────────────────────────
-            Secondary, flush-mounted. Shows reasoning for
-            the selected span. Like Figma / VS Code inspector. */}
         <aside className="inspector">
           <div className="inspector-header">
             <span className="inspector-title">Inspector</span>
@@ -233,8 +422,10 @@ export default function App() {
             allSpans={allSpans}
             activeSpanId={activeSpanId}
             onSpanClick={handleSpanClick}
-            onErase={handleErase}
-            isErasing={isErasing}
+            onUserRedact={handleUserRedact}
+            onUserUnredact={handleUserUnredact}
+            onRevertSpan={handleRevertSpan}
+            isOverriding={isOverriding}
           />
         </aside>
       </div>

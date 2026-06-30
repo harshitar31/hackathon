@@ -1,18 +1,19 @@
 import React, { useMemo } from 'react';
-import { AlertTriangle, Tag } from 'lucide-react';
+import { AlertTriangle, ShieldOff, ShieldCheck, EyeOff } from 'lucide-react';
 
 /**
  * Inspector
  *
  * Right-panel inspector. Shows:
- * - Type + kind in a compact badge row
- * - Confidence: number + 4px bar (audit-style, not decorative)
- * - Reasoning: plain prose, keyword bolded in accent blue
- * - Disputable callout: inline, not a modal/card stack
- * - Erase button: secondary-destructive, requires intent
- * - Span navigation list: flat, like Figma layers
- *
- * Design: no card stacking, no shadows, hairline separators only.
+ * - Type + status badge
+ * - Confidence bar
+ * - Reasoning (full text, keyword bolded) — sourced from backend, not JSX copy
+ * - Disputable callout
+ * - Action buttons:
+ *     Confirmed:  [Unredact] (or [Re-redact] if user_unredacted)
+ *     Disputable: [Redact Anyway] (or [Cancel Override] if user_redacted)
+ *     Near-miss:  [Redact Anyway] (or [Cancel Override] if user_redacted)
+ * - Span navigation list
  */
 
 function boldKeyword(text, keyword) {
@@ -49,18 +50,28 @@ export default function Inspector({
   allSpans,
   activeSpanId,
   onSpanClick,
-  onErase,
-  isErasing,
+  onUserRedact,
+  onUserUnredact,
+  onRevertSpan,
+  isOverriding,
 }) {
   const badgeClass = useMemo(() => {
     if (!selectedSpan) return '';
     if (selectedSpan.kind === 'near_miss') return 'nearmiss';
-    if (selectedSpan.is_disputable) return 'disputable';
+    if (selectedSpan.status === 'disputable') return 'disputable';
     return 'redact';
   }, [selectedSpan]);
 
-  const kindLabel = selectedSpan?.kind === 'near_miss' ? 'Near-miss — left visible' : 'Redacted';
+  const kindLabel = useMemo(() => {
+    if (!selectedSpan) return '';
+    if (selectedSpan.user_unredacted) return 'User Unredacted';
+    if (selectedSpan.user_redacted) return 'User Redacted';
+    if (selectedSpan.kind === 'near_miss') return 'Near-miss — left visible';
+    if (selectedSpan.status === 'disputable') return 'Disputable — review recommended';
+    return 'Redacted';
+  }, [selectedSpan]);
 
+  // Bold the matched keyword OR disqualifying keyword in the reasoning text.
   const reasoningNodes = useMemo(() => {
     if (!selectedSpan) return null;
     const kw = selectedSpan.matched_keyword || selectedSpan.disqualifying_keyword;
@@ -70,18 +81,83 @@ export default function Inspector({
   const redactions = allSpans.filter(s => s.kind === 'redaction');
   const nearMisses = allSpans.filter(s => s.kind === 'near_miss');
 
+  // Derive the action button for the selected span
+  function ActionButton() {
+    if (!selectedSpan) return null;
+
+    const isConfirmed = selectedSpan.kind === 'redaction' && selectedSpan.status === 'confirmed';
+    const isDisputable = selectedSpan.status === 'disputable';
+    const isNearMiss = selectedSpan.kind === 'near_miss';
+
+    if (isConfirmed) {
+      if (selectedSpan.user_unredacted) {
+        // Already unredacted — restore the AI's redaction
+        return (
+          <button
+            id={`re-redact-btn-${selectedSpan.span_id}`}
+            className="btn-danger"
+            onClick={() => onRevertSpan(selectedSpan.span_id)}
+            disabled={isOverriding}
+          >
+            <ShieldCheck size={13} aria-hidden="true" />
+            {isOverriding ? 'Applying…' : 'Re-redact'}
+          </button>
+        );
+      }
+      // Normal confirmed — offer to unredact
+      return (
+        <button
+          id={`unredact-btn-${selectedSpan.span_id}`}
+          className="btn-override-unredact"
+          onClick={() => onUserUnredact(selectedSpan.span_id)}
+          disabled={isOverriding}
+        >
+          <ShieldOff size={13} aria-hidden="true" />
+          {isOverriding ? 'Applying…' : 'Unredact'}
+        </button>
+      );
+    }
+
+    if (isDisputable || isNearMiss) {
+      if (selectedSpan.user_redacted) {
+        // Already user-redacted — restore the AI's original decision (leave visible)
+        return (
+          <button
+            id={`cancel-override-btn-${selectedSpan.span_id}`}
+            className="btn-secondary"
+            onClick={() => onRevertSpan(selectedSpan.span_id)}
+            disabled={isOverriding}
+          >
+            <EyeOff size={13} aria-hidden="true" />
+            {isOverriding ? 'Applying…' : 'Cancel Override'}
+          </button>
+        );
+      }
+      return (
+        <button
+          id={`redact-anyway-btn-${selectedSpan.span_id}`}
+          className="btn-danger"
+          onClick={() => onUserRedact(selectedSpan.span_id)}
+          disabled={isOverriding}
+        >
+          <ShieldCheck size={13} aria-hidden="true" />
+          {isOverriding ? 'Applying…' : 'Redact Anyway'}
+        </button>
+      );
+    }
+
+    return null;
+  }
+
   return (
     <>
-      {/* Inspector content */}
       <div className="inspector-body">
         {!selectedSpan ? (
-          <>
-            <div className="inspector-empty">
-              <div className="inspector-empty-label">
-                Click any highlighted or underlined text to inspect the redaction reasoning.
-              </div>
+          <div className="inspector-empty">
+            <div className="inspector-empty-label">
+              Click any highlighted or underlined text to inspect the AI redaction reasoning.
             </div>
-          </>
+          </div>
         ) : (
           <div className="fade-in">
             {/* Identity */}
@@ -99,14 +175,14 @@ export default function Inspector({
               <ConfidenceBar confidence={selectedSpan.confidence} />
             </div>
 
-            {/* Reasoning */}
+            {/* Reasoning — full text, keyword bolded */}
             <div className="insp-section">
               <div className="insp-section-label">Reasoning</div>
               <div className="reasoning-block">{reasoningNodes}</div>
             </div>
 
             {/* Disputable callout */}
-            {selectedSpan.is_disputable && (
+            {selectedSpan.status === 'disputable' && !selectedSpan.user_redacted && (
               <div className="insp-section">
                 <div className="callout">
                   <AlertTriangle
@@ -115,23 +191,45 @@ export default function Inspector({
                     aria-hidden="true"
                   />
                   <span>
-                    Low confidence, no keyword support. This may be a product name rather than a person. Applying the tag will replace it with {`[${selectedSpan.type.toUpperCase()}]`} in the document — review before proceeding.
+                    Limited contextual evidence — review the surrounding text
+                    before deciding to redact. Your decision will be reflected
+                    in the preview and download.
                   </span>
                 </div>
               </div>
             )}
 
-            {/* Apply tag */}
+            {/* User-unredacted notice */}
+            {selectedSpan.user_unredacted && (
+              <div className="insp-section">
+                <div className="callout callout-user">
+                  <AlertTriangle size={13} className="callout-icon" aria-hidden="true" />
+                  <span>
+                    You marked this span as visible. The preview shows{' '}
+                    <code>[USER UNREDACTED]</code>; the download shows the original
+                    text with no marker.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* User-redacted notice (for disputable/near-miss) */}
+            {selectedSpan.user_redacted && (
+              <div className="insp-section">
+                <div className="callout callout-user-redact">
+                  <ShieldCheck size={13} className="callout-icon" aria-hidden="true" />
+                  <span>
+                    You overrode the AI and redacted this span. It will appear as{' '}
+                    <code>[{selectedSpan.type.toUpperCase()} — User Override]</code>{' '}
+                    in both the preview and download.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Action button */}
             <div className="insp-section">
-              <button
-                id={`erase-btn-${selectedSpan.span_id}`}
-                className="btn-danger"
-                onClick={() => onErase(selectedSpan.span_id)}
-                disabled={isErasing}
-              >
-                <Tag size={13} aria-hidden="true" />
-                {isErasing ? 'Applying…' : `Replace with [${selectedSpan.type.toUpperCase()}]`}
-              </button>
+              <ActionButton />
             </div>
           </div>
         )}
@@ -171,8 +269,10 @@ export default function Inspector({
 
 function SpanNavItem({ span, isSelected, onClick }) {
   const dotClass =
-    span.kind === 'near_miss' ? 'amber' :
-    span.is_disputable ? 'purple' : 'red';
+    span.user_unredacted                   ? 'green' :
+    span.user_redacted                     ? 'red' :
+    span.kind === 'near_miss'              ? 'amber' :
+    span.status === 'disputable'           ? 'purple' : 'red';
 
   return (
     <div
@@ -186,7 +286,9 @@ function SpanNavItem({ span, isSelected, onClick }) {
       <div className={`span-nav-dot ${dotClass}`} />
       <span className="span-nav-type">
         {span.type}
-        {span.is_disputable && ' ·⚠'}
+        {span.status === 'disputable' && !span.user_redacted && ' ·⚠'}
+        {span.user_redacted && ' · User ↑'}
+        {span.user_unredacted && ' · User ↓'}
       </span>
       <span className="span-nav-conf">{Math.round(span.confidence * 100)}%</span>
     </div>
