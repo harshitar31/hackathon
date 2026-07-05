@@ -106,6 +106,10 @@ def _is_noise(text: str, label: str) -> bool:
     if label == "ORG" and re.match(r'^[A-Z]{1,5}$', t):
         return True
 
+    # Names shouldn't contain digits (filters out "Austin TX 78701" misclassified as PERSON)
+    if label == "PERSON" and re.search(r'\d', t):
+        return True
+
     return False
 
 

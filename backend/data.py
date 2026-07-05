@@ -277,6 +277,8 @@ def _build_documents() -> Dict[str, DocumentState]:
     d5.redactions.append(_r("5", 0, "Marcus Webb", c5, "Name", 0.97))
     # confirmed — "social security" label precedes SSN
     d5.redactions.append(_r("5", 1, "482-90-1157", c5, "SSN", 0.99))
+    # confirmed — "address" label precedes
+    d5.redactions.append(_r("5", 6, "17 Elm Street, Austin TX 78701", c5, "Physical Address", 0.95))
     # confirmed — "email" keyword precedes
     d5.redactions.append(_r("5", 2, "marcus.webb@protonmail.com", c5, "Email", 0.98))
     # confirmed — "phone" implied by "contact" keyword
