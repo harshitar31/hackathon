@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Download, Eye, FileText, ChevronDown, RotateCcw } from 'lucide-react';
+import { Download, Eye, FileText, ChevronDown, RotateCcw, X } from 'lucide-react';
 import './index.css';
 import DocumentViewer from './components/DocumentViewer';
 import Inspector from './components/SidePanel';
@@ -54,6 +54,10 @@ export default function App() {
   const [canUndo, setCanUndo]       = useState(false);
   const [isLoading, setIsLoading]   = useState(true);
   const [error, setError]           = useState(null);
+
+  // Download modal
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [includeReport, setIncludeReport]         = useState(false);
 
   // Selector dropdown open state
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -237,9 +241,11 @@ export default function App() {
   }, [_applyOverrideResult]);
 
   // ── Download ─────────────────────────────────────────────────────────────
-  const handleDownload = useCallback(async () => {
+  const handleDownload = useCallback(async (withReport) => {
+    setDownloadModalOpen(false);
     try {
-      const res = await apiFetch('/download');
+      const url = `/download${withReport ? '?include_report=true' : ''}`;
+      const res = await apiFetch(url);
       if (!res.ok) throw new Error('Download failed');
       const contentDisposition = res.headers.get('Content-Disposition');
       let dlFilename = 'greenact_output.txt';
@@ -248,12 +254,12 @@ export default function App() {
         if (match) dlFilename = match[1];
       }
       const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
+      const dlUrl = URL.createObjectURL(blob);
       const a    = window.document.createElement('a');
-      a.href     = url;
+      a.href     = dlUrl;
       a.download = dlFilename;
       a.click();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(dlUrl);
     } catch (e) {
       setError(e.message);
     }
@@ -385,7 +391,7 @@ export default function App() {
               <button
                 id="download-btn"
                 className="btn-primary"
-                onClick={handleDownload}
+                onClick={() => setDownloadModalOpen(true)}
                 disabled={isLoading}
               >
                 <Download size={13} aria-hidden="true" />
@@ -426,9 +432,87 @@ export default function App() {
             onUserUnredact={handleUserUnredact}
             onRevertSpan={handleRevertSpan}
             isOverriding={isOverriding}
+            doc={doc}
           />
         </aside>
       </div>
+
+      {/* Download modal */}
+      {downloadModalOpen && (
+        <div className="modal-backdrop" onClick={() => setDownloadModalOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="download-modal-title">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="modal-title" id="download-modal-title">Download redacted document</span>
+              <button
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: 4 }}
+                onClick={() => setDownloadModalOpen(false)}
+                aria-label="Close"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="modal-options">
+              <label
+                className={`modal-option${!includeReport ? ' is-selected' : ''}`}
+                htmlFor="dl-clean"
+              >
+                <input
+                  type="radio"
+                  id="dl-clean"
+                  name="dl-mode"
+                  checked={!includeReport}
+                  onChange={() => setIncludeReport(false)}
+                />
+                <div className="modal-option-body">
+                  <span className="modal-option-label">Download only</span>
+                  <span className="modal-option-desc">
+                    Clean redacted file — safe to send directly.
+                  </span>
+                </div>
+              </label>
+
+              <label
+                className={`modal-option${includeReport ? ' is-selected' : ''}`}
+                htmlFor="dl-report"
+              >
+                <input
+                  type="radio"
+                  id="dl-report"
+                  name="dl-mode"
+                  checked={includeReport}
+                  onChange={() => setIncludeReport(true)}
+                />
+                <div className="modal-option-body">
+                  <span className="modal-option-label">Include analysis report</span>
+                  <span className="modal-option-desc">
+                    Appends a plain-text summary of redacted entities, disputable
+                    spans, near-misses, and user overrides.
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                id="download-modal-cancel"
+                className="btn-secondary"
+                onClick={() => setDownloadModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                id="download-modal-confirm"
+                className="btn-primary"
+                onClick={() => handleDownload(includeReport)}
+              >
+                <Download size={13} aria-hidden="true" />
+                Download
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

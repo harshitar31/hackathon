@@ -178,8 +178,10 @@ def _build_documents() -> Dict[str, DocumentState]:
         "Signed: Sarah Jenkins\nDate: January 15, 2025"
     )
     d2 = DocumentState(doc_id="doc-002", filename="Employment_Contract_2025.pdf", content=c2)
-    # confirmed — "sincerely/signed" precedes name (second occurrence for dedup)
+    # confirmed — "and" precedes name (first occurrence in body)
     d2.redactions.append(_r("2", 0, "Sarah Jenkins", c2, "Name", 0.98))
+    # confirmed — "signed" keyword precedes name (second occurrence at signature line)
+    d2.redactions.append(_r("2", 6, "Sarah Jenkins", c2, "Name", 0.98, occurrence=2))
     # confirmed — keyword "address" precedes
     d2.redactions.append(_r("2", 1, "1422 Oakwood Drive, Apt 4B, Seattle WA 98109", c2, "Address", 0.95))
     # confirmed — keyword "phone" precedes
@@ -188,6 +190,8 @@ def _build_documents() -> Dict[str, DocumentState]:
     d2.redactions.append(_r("2", 3, "s.jenkins.personal@email.com", c2, "Email", 0.99))
     # fallback — salary format-matched, no context keyword; conf 0.82 → NOT disputable
     d2.redactions.append(_r("2", 4, "$145,000", c2, "Salary", 0.82))
+    # confirmed — "account" keyword precedes partial account number
+    d2.redactions.append(_r("2", 7, "7741", c2, "Account Number", 0.88))
     # DISPUTABLE — "TechCorp LLC" looks like an org name, no org-related keyword adjacent, conf 0.58
     d2.redactions.append(_r("2", 5, "TechCorp LLC", c2, "Organisation", 0.58))
     # near-miss — "Jan 15, 2025" date pattern matched but "agreement" context disqualifies DOB read
@@ -377,8 +381,8 @@ def _build_documents() -> Dict[str, DocumentState]:
     #              context: ['income', 'credit', 'score', 'authorization', 'printed', 'name']
     #              none of these are Name CONTEXT_KEYWORDS; conf 0.60 → disputable
     d8.redactions.append(_r("8", 5, "Thomas Reilly", c8, "Name", 0.60, occurrence=2))
-    # near-miss — "Apex Construction LLC" pattern-matches Name, but "llc" disqualifies
-    d8.near_misses.append(_nm("8", 0, "Apex Construction", c8, "Name", 0.73))
+    # confirmed — "employer" label precedes; LLC makes this unambiguously an Organisation
+    d8.redactions.append(_r("8", 6, "Apex Construction LLC", c8, "Organisation", 0.82))
     # near-miss — "February 20, 2025" date matches DOB pattern but "date" label in signing context disqualifies
     d8.near_misses.append(_nm("8", 1, "February 20, 2025", c8, "Date of Birth", 0.44))
     docs["doc-008"] = d8
@@ -522,7 +526,26 @@ def _build_documents() -> Dict[str, DocumentState]:
     return docs
 
 
+def _supplement_with_ner(docs: Dict[str, DocumentState]) -> None:
+    """
+    Run spaCy NER on every document and append any newly detected spans
+    (those that don't overlap existing redactions) to doc.redactions.
+
+    This is a best-effort pass — if the model is unavailable the docs are
+    returned unmodified.  All existing spans are preserved exactly as-is.
+    """
+    try:
+        import ner as _ner
+    except ImportError:
+        return
+
+    for doc_id, doc in docs.items():
+        new_spans = _ner.detect_spans(doc_id, doc.content, doc.redactions)
+        doc.redactions.extend(new_spans)
+
+
 DOCUMENTS: Dict[str, DocumentState] = _build_documents()
+_supplement_with_ner(DOCUMENTS)
 
 
 def get_document(doc_id: str) -> Optional[DocumentState]:

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { AlertTriangle, ShieldOff, ShieldCheck, EyeOff } from 'lucide-react';
+import React, { useMemo, useState, useCallback } from 'react';
+import { AlertTriangle, ShieldOff, ShieldCheck, EyeOff, Search, CheckCircle, XCircle, Eye, MinusCircle } from 'lucide-react';
 
 /**
  * Inspector
@@ -9,10 +9,8 @@ import { AlertTriangle, ShieldOff, ShieldCheck, EyeOff } from 'lucide-react';
  * - Confidence bar
  * - Reasoning (full text, keyword bolded) — sourced from backend, not JSX copy
  * - Disputable callout
- * - Action buttons:
- *     Confirmed:  [Unredact] (or [Re-redact] if user_unredacted)
- *     Disputable: [Redact Anyway] (or [Cancel Override] if user_redacted)
- *     Near-miss:  [Redact Anyway] (or [Cancel Override] if user_redacted)
+ * - Action buttons
+ * - "Why isn't this redacted?" search
  * - Span navigation list
  */
 
@@ -45,6 +43,152 @@ function ConfidenceBar({ confidence }) {
   );
 }
 
+// ── Search feature ────────────────────────────────────────────────────────────
+
+/**
+ * Classify what happened to a searched query against all known spans.
+ * Returns the best-matching span and a status category.
+ *
+ * Priority: redacted (confirmed) > disputable > near_miss > not_detected
+ * "not_in_doc" means the word doesn't appear in the raw document at all.
+ */
+function classifyQuery(query, allSpans, doc) {
+  if (!query.trim() || !doc) return null;
+
+  const q = query.trim().toLowerCase();
+
+  // Check if the word appears in the document at all
+  if (!doc.toLowerCase().includes(q)) {
+    return { kind: 'not_in_doc' };
+  }
+
+  // Find all spans whose text window contains the query (substring, case-insensitive)
+  const matching = allSpans.filter(span => {
+    const spanText = doc.slice(span.start_index, span.end_index).toLowerCase();
+    return spanText.includes(q);
+  });
+
+  if (matching.length === 0) {
+    return { kind: 'not_found' };
+  }
+
+  // Priority: confirmed redaction > disputable > near_miss
+  const confirmed = matching.find(
+    s => s.kind === 'redaction' && s.status === 'confirmed'
+  );
+  if (confirmed) return { kind: 'found_redact', span: confirmed };
+
+  const disputable = matching.find(s => s.status === 'disputable');
+  if (disputable) return { kind: 'found_disputable', span: disputable };
+
+  const nearmiss = matching.find(s => s.kind === 'near_miss');
+  if (nearmiss) return { kind: 'found_nearmiss', span: nearmiss };
+
+  // Fallback — user-unredacted confirmed span
+  return { kind: 'found_redact', span: matching[0] };
+}
+
+function SearchResult({ result, onSpanClick }) {
+  if (!result) return null;
+
+  if (result.kind === 'not_in_doc') {
+    return (
+      <div className="search-result not-in-doc">
+        <MinusCircle size={14} className="search-result-icon" aria-hidden="true" />
+        <div className="search-result-body">
+          <span className="search-result-title">Not found in document</span>
+          <span className="search-result-sub">This text doesn't appear anywhere in the document.</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (result.kind === 'not_found') {
+    return (
+      <div className="search-result not-found">
+        <XCircle size={14} className="search-result-icon" aria-hidden="true" />
+        <div className="search-result-body">
+          <span className="search-result-title">Not detected</span>
+          <span className="search-result-sub">
+            Text appears in the document but no span covers it — the model did not flag it.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const { span, kind } = result;
+  const conf = Math.round(span.confidence * 100);
+
+  if (kind === 'found_redact') {
+    const isUnredacted = span.user_unredacted;
+    return (
+      <div
+        className="search-result found-redact"
+        style={{ cursor: 'pointer' }}
+        onClick={() => onSpanClick(span.span_id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => e.key === 'Enter' && onSpanClick(span.span_id)}
+      >
+        <CheckCircle size={14} className="search-result-icon" aria-hidden="true" />
+        <div className="search-result-body">
+          <span className="search-result-title">
+            {isUnredacted ? 'Redacted (user unredacted)' : 'Redacted'} · {span.type}
+          </span>
+          <span className="search-result-sub">{conf}% confidence · click to inspect</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === 'found_disputable') {
+    return (
+      <div
+        className="search-result found-disputable"
+        style={{ cursor: 'pointer' }}
+        onClick={() => onSpanClick(span.span_id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => e.key === 'Enter' && onSpanClick(span.span_id)}
+      >
+        <AlertTriangle size={14} className="search-result-icon" aria-hidden="true" />
+        <div className="search-result-body">
+          <span className="search-result-title">Disputable · {span.type}</span>
+          <span className="search-result-sub">
+            {conf}% confidence, no keyword match — left visible, review recommended · click to inspect
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === 'found_nearmiss') {
+    return (
+      <div
+        className="search-result found-nearmiss"
+        style={{ cursor: 'pointer' }}
+        onClick={() => onSpanClick(span.span_id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => e.key === 'Enter' && onSpanClick(span.span_id)}
+      >
+        <Eye size={14} className="search-result-icon" aria-hidden="true" />
+        <div className="search-result-body">
+          <span className="search-result-title">Near-miss · {span.type}</span>
+          <span className="search-result-sub">
+            AI noticed it but left it visible due to disqualifying context · click to inspect
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ── Main Inspector export ─────────────────────────────────────────────────────
+
 export default function Inspector({
   selectedSpan,
   allSpans,
@@ -54,7 +198,10 @@ export default function Inspector({
   onUserUnredact,
   onRevertSpan,
   isOverriding,
+  doc,
 }) {
+  const [searchQuery, setSearchQuery] = useState('');
+
   const badgeClass = useMemo(() => {
     if (!selectedSpan) return '';
     if (selectedSpan.kind === 'near_miss') return 'nearmiss';
@@ -71,17 +218,20 @@ export default function Inspector({
     return 'Redacted';
   }, [selectedSpan]);
 
-  // Bold the matched keyword OR disqualifying keyword in the reasoning text.
   const reasoningNodes = useMemo(() => {
     if (!selectedSpan) return null;
     const kw = selectedSpan.matched_keyword || selectedSpan.disqualifying_keyword;
     return boldKeyword(selectedSpan.reasoning, kw);
   }, [selectedSpan]);
 
+  const searchResult = useMemo(
+    () => (searchQuery.trim() ? classifyQuery(searchQuery, allSpans, doc) : null),
+    [searchQuery, allSpans, doc]
+  );
+
   const redactions = allSpans.filter(s => s.kind === 'redaction');
   const nearMisses = allSpans.filter(s => s.kind === 'near_miss');
 
-  // Derive the action button for the selected span
   function ActionButton() {
     if (!selectedSpan) return null;
 
@@ -91,7 +241,6 @@ export default function Inspector({
 
     if (isConfirmed) {
       if (selectedSpan.user_unredacted) {
-        // Already unredacted — restore the AI's redaction
         return (
           <button
             id={`re-redact-btn-${selectedSpan.span_id}`}
@@ -104,7 +253,6 @@ export default function Inspector({
           </button>
         );
       }
-      // Normal confirmed — offer to unredact
       return (
         <button
           id={`unredact-btn-${selectedSpan.span_id}`}
@@ -120,7 +268,6 @@ export default function Inspector({
 
     if (isDisputable || isNearMiss) {
       if (selectedSpan.user_redacted) {
-        // Already user-redacted — restore the AI's original decision (leave visible)
         return (
           <button
             id={`cancel-override-btn-${selectedSpan.span_id}`}
@@ -168,6 +315,25 @@ export default function Inspector({
           </div>
         </div>
 
+        {/* Search box — always visible */}
+        <div className="search-box">
+          <div className="search-input-wrap">
+            <Search size={13} className="search-input-icon" aria-hidden="true" />
+            <input
+              id="span-search-input"
+              className="search-input"
+              type="text"
+              placeholder="Why isn't this redacted?"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              aria-label="Search for text in the document to check its redaction status"
+            />
+          </div>
+          {searchResult && (
+            <SearchResult result={searchResult} onSpanClick={onSpanClick} />
+          )}
+        </div>
+
         {!selectedSpan ? (
           <div className="inspector-empty">
             <div className="inspector-empty-label">
@@ -191,7 +357,7 @@ export default function Inspector({
               <ConfidenceBar confidence={selectedSpan.confidence} />
             </div>
 
-            {/* Reasoning — full text, keyword bolded */}
+            {/* Reasoning */}
             <div className="insp-section">
               <div className="insp-section-label">Reasoning</div>
               <div className="reasoning-block">{reasoningNodes}</div>
@@ -229,7 +395,7 @@ export default function Inspector({
               </div>
             )}
 
-            {/* User-redacted notice (for disputable/near-miss) */}
+            {/* User-redacted notice */}
             {selectedSpan.user_redacted && (
               <div className="insp-section">
                 <div className="callout callout-user-redact">
@@ -310,3 +476,4 @@ function SpanNavItem({ span, isSelected, onClick }) {
     </div>
   );
 }
+

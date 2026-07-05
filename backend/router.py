@@ -26,7 +26,7 @@ from data import (
     get_active_doc_id,
 )
 from reasoning import compute_reasoning_for_redaction, compute_reasoning_for_near_miss
-from erasure import build_preview_or_download
+from erasure import build_preview_or_download, build_coverage_report
 
 router = APIRouter()
 
@@ -318,16 +318,23 @@ async def preview_output(
 
 @router.get("/download")
 async def download(
+    include_report: bool = Query(default=False),
     x_session_id: Optional[str] = Header(default=None),
 ):
     """Download the final redacted document as a text file.
     User-unredacted spans appear as raw original text (no marker).
-    User-redacted spans appear as [TYPE — User Override].
+    User-redacted spans appear as [TYPE N — User Override].
+
+    include_report=true  → appends a plain-text coverage report as an appendix.
+    include_report=false → clean file only (default, safe to forward directly).
     """
     session_id = _resolve_session(x_session_id)
     doc = _active_doc_or_404(session_id)
 
     content = build_preview_or_download(doc, is_preview=False)
+    if include_report:
+        content += build_coverage_report(doc)
+
     safe_name = doc.filename.replace(" ", "_")
     return Response(
         content=content,

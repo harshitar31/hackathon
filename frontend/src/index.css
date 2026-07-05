@@ -1155,3 +1155,200 @@ body {
   opacity: 0.85;
   line-height: 1.5;
 }
+
+/* ============================================================
+   Download Modal
+   ============================================================ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  animation: fade-in 120ms ease both;
+}
+
+.modal {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.08);
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  padding: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  animation: fade-in 150ms ease both;
+}
+
+.modal-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.modal-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.modal-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--ease), border-color var(--ease);
+  background: var(--color-bg);
+}
+
+.modal-option:hover {
+  background: var(--color-bg-hover);
+}
+
+.modal-option.is-selected {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+.modal-option input[type="radio"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--color-accent);
+}
+
+.modal-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modal-option-label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.modal-option-desc {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+/* ============================================================
+   Inspector Search
+   ============================================================ */
+
+.search-box {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input-icon {
+  position: absolute;
+  left: 8px;
+  color: var(--color-text-muted);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.search-input {
+  width: 100%;
+  padding: 5px 8px 5px 28px;
+  font-size: var(--text-sm);
+  font-family: var(--font);
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--ease);
+}
+
+.search-input::placeholder {
+  color: var(--color-text-disabled);
+}
+
+.search-input:focus {
+  border-color: var(--color-accent);
+}
+
+.search-result {
+  margin-top: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  line-height: 1.5;
+}
+
+.search-result.found-redact {
+  background: var(--color-red-light);
+  border: 1px solid var(--color-red-border);
+  color: var(--color-red-text);
+}
+
+.search-result.found-disputable {
+  background: var(--color-purple-light);
+  border: 1px solid var(--color-purple-border);
+  color: var(--color-purple);
+}
+
+.search-result.found-nearmiss {
+  background: var(--color-amber-light);
+  border: 1px solid var(--color-amber-border);
+  color: var(--color-amber-text);
+}
+
+.search-result.not-found {
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.search-result.not-in-doc {
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-soft);
+  color: var(--color-text-disabled);
+  font-style: italic;
+}
+
+.search-result-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.search-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.search-result-title {
+  font-weight: 600;
+}
+
+.search-result-sub {
+  opacity: 0.8;
+}
